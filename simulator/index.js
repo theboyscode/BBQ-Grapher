@@ -1,7 +1,7 @@
 const mqtt = require('mqtt');
 
 // Connect to the local Mosquitto broker
-const client = mqtt.connect('mqtt://127.0.0.1:1883');
+const client = mqtt.connect('mqtt://bbq_admin:bbq_secret@127.0.0.1:1883');
 
 // Simulator state
 let smokerTemp = 225.0; // Starts around 225

@@ -68,9 +68,56 @@ You need a home server, Raspberry Pi, or always-on PC with Docker installed to h
    ```
 5. Turn on your Inkbird thermometer. The ESP32 will automatically find it, connect, and start streaming data to your dashboard!
 
+### Phase 3: Simulator (Optional for Testing)
+If you don't have the hardware yet, you can run the included Node.js simulator to generate realistic cooking data and watch the UI react.
+1. Ensure the Docker containers are running.
+2. From the project root, install the simulator dependencies:
+   ```bash
+   cd simulator
+   npm install
+   ```
+3. Run the simulator script:
+   ```bash
+   node index.js
+   ```
+   *The simulator will automatically connect to your local MQTT broker and stream a simulated brisket temperature curve!*
+
 ---
 
-## 🏗️ Architecture
+## 🏗️ Architecture & Data Flow
+
+```mermaid
+graph TD
+    %% Hardware Layer
+    subgraph Hardware Layer
+        Thermometer[iBBQ Thermometer]
+        ESP[ESP32 Microcontroller]
+        Thermometer -. BLE .-> ESP
+    end
+
+    %% Docker Layer
+    subgraph Docker Stack
+        Broker[Aedes MQTT Broker]
+        Backend[Node.js / Express Backend]
+        DB[(SQLite Database)]
+        Frontend[React / Vite Frontend]
+        Nginx[Nginx Reverse Proxy]
+    end
+
+    %% External Services
+    Twilio[Twilio SMS API]
+    User[User's Phone / Browser]
+
+    %% Data Flow
+    ESP -- Wi-Fi MQTT Publish --> Broker
+    Broker -- MQTT Subscribe --> Backend
+    Backend -- Save / Load Session Data --> DB
+    Backend -- Send Alerts via Webhook --> Twilio
+    Backend -- Emit Real-Time Data --> Frontend
+    Frontend -- HTTP / WebSocket --> Nginx
+    Nginx -- Proxy --> User
+```
+
 - **ESP32 Script:** Scans for BLE iBBQ devices, parses the raw hex temperatures, and publishes them securely to an MQTT broker.
 - **Broker Container:** A lightweight Node.js/Aedes MQTT broker.
 - **Backend Container:** A Node.js/Express server that listens to MQTT topics, debounces the data, saves it to an SQLite database (`/app/data/bbq_data.db`), handles Twilio webhook logic, and broadcasts live data to the frontend via WebSockets.
