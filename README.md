@@ -9,8 +9,6 @@ BBQ Grapher Pro is a full-stack, predictive IoT BBQ monitoring system. It interc
 - **SMS Alerts:** Integrates with Twilio to send a text message to your phone when the meat reaches its target temperature or if your smoker fire drops below 200°F.
 - **Fully Self-Hosted:** Runs 100% locally on your network via Docker. No cloud subscriptions required (other than a cheap Twilio API key for texts).
 
-![BBQ Grapher UI Demo](demo.webp)
-
 ---
 
 ## 🛠️ Hardware Requirements
