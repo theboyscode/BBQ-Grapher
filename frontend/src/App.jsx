@@ -1,20 +1,23 @@
 import { useState, useEffect } from 'react';
 import { io } from 'socket.io-client';
-import { Battery } from 'lucide-react';
+import { Battery, LayoutDashboard, BookOpen, Play, Square } from 'lucide-react';
 import BBQChart from './components/BBQChart';
 import PredictionPanel from './components/PredictionPanel';
+import Cookbook from './components/Cookbook';
 
 // Connect to the backend using a relative path, as Nginx will proxy /socket.io/ for us!
 const socket = io();
 
 function App() {
   const [data, setData] = useState([]);
-  const [targetTemp, setTargetTemp] = useState(205); // Default brisket/pork butt target
+  const [activeSession, setActiveSession] = useState(null);
+  const [targetTemp, setTargetTemp] = useState(205);
   const [currentMeatTemp, setCurrentMeatTemp] = useState(null);
   const [currentSmokerTemp, setCurrentSmokerTemp] = useState(null);
   const [currentProbe3, setCurrentProbe3] = useState(null);
   const [currentProbe4, setCurrentProbe4] = useState(null);
   const [battery, setBattery] = useState(null);
+  const [activeTab, setActiveTab] = useState('dashboard');
   
   // Real-time connection states
   const [isConnected, setIsConnected] = useState(socket.connected);
@@ -42,10 +45,24 @@ function App() {
         setCurrentProbe3(last.probe3);
         setCurrentProbe4(last.probe4);
         setBattery(last.battery);
-        // We just got history, we are theoretically alive
         setLastDataTime(Date.now());
         setIsReceiving(true);
       }
+    });
+
+    socket.on('activeSession', (session) => {
+      setActiveSession(session);
+      if (session && session.target_temp) {
+        setTargetTemp(session.target_temp);
+      }
+    });
+
+    socket.on('targetTempChanged', ({ temp }) => {
+      setTargetTemp(temp);
+    });
+
+    socket.on('notificationsChanged', ({ enabled }) => {
+      setActiveSession(prev => prev ? { ...prev, notifications_enabled: enabled } : prev);
     });
 
     socket.on('temperatureUpdate', (newDataPoint) => {
@@ -64,8 +81,38 @@ function App() {
       socket.off('disconnect');
       socket.off('history');
       socket.off('temperatureUpdate');
+      socket.off('activeSession');
+      socket.off('targetTempChanged');
+      socket.off('notificationsChanged');
     };
   }, []);
+
+  const handleStartCook = async () => {
+    const name = prompt("Enter a name for this cook session:", "Brisket");
+    if (!name) return;
+    await fetch('/api/sessions/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name })
+    });
+  };
+
+  const handleEndCook = async () => {
+    if (confirm("Are you sure you want to end the current cook session?")) {
+      await fetch('/api/sessions/end', { method: 'POST' });
+    }
+  };
+
+  const handleTargetTempChange = async (newTemp) => {
+    setTargetTemp(newTemp);
+    if (activeSession) {
+      await fetch('/api/sessions/target', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId: activeSession.id, temp: newTemp })
+      });
+    }
+  };
 
   // Monitor staleness (If no data for 20 seconds, we aren't receiving live data)
   useEffect(() => {
@@ -88,14 +135,29 @@ function App() {
             <p className="text-gray-400 mt-1">Smart predictive monitoring</p>
           </div>
           <div className="flex items-center gap-4">
+            <nav className="flex items-center gap-2 bg-gray-800/50 p-1 rounded-lg border border-gray-700/50 mr-4">
+              <button 
+                onClick={() => setActiveTab('dashboard')}
+                className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${activeTab === 'dashboard' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-700'}`}
+              >
+                <LayoutDashboard size={16} /> Dashboard
+              </button>
+              <button 
+                onClick={() => setActiveTab('cookbook')}
+                className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${activeTab === 'cookbook' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-700'}`}
+              >
+                <BookOpen size={16} /> Cookbook
+              </button>
+            </nav>
+
             {battery !== null && (
-              <div className="flex items-center gap-1 text-gray-400 bg-gray-800/50 px-2 py-1 rounded-md border border-gray-700/50">
+              <div className="flex items-center gap-1 text-gray-400 bg-gray-800/50 px-2 py-1.5 rounded-md border border-gray-700/50">
                 <Battery size={16} className={battery > 20 ? "text-green-400" : "text-red-400"} />
                 <span className="text-xs font-bold">{battery.toFixed(0)}%</span>
               </div>
             )}
             
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 bg-gray-800/50 px-3 py-1.5 rounded-md border border-gray-700/50">
               {!isConnected ? (
               <>
                 <span className="relative inline-flex rounded-full h-3 w-3 bg-red-500"></span>
@@ -119,19 +181,71 @@ function App() {
           </div>
         </header>
 
-          <PredictionPanel 
-            data={data}
-            targetTemp={targetTemp}
-            setTargetTemp={setTargetTemp}
-            currentMeatTemp={currentMeatTemp}
-            currentSmokerTemp={currentSmokerTemp}
-            currentProbe3={currentProbe3}
-            currentProbe4={currentProbe4}
-          />
+        {activeTab === 'dashboard' ? (
+          <>
+            {!activeSession && (
+              <div className="mb-6 bg-blue-900/40 border border-blue-500/50 p-4 rounded-xl flex items-center justify-between">
+                <div>
+                  <h3 className="text-blue-100 font-bold text-lg">Not Recording</h3>
+                  <p className="text-blue-300 text-sm">You are viewing live data, but it is not being saved to the database. Start a cook session to record history.</p>
+                </div>
+                <button 
+                  onClick={handleStartCook}
+                  className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg font-bold transition-colors shadow-lg"
+                >
+                  <Play size={18} fill="currentColor" /> Start Cook
+                </button>
+              </div>
+            )}
 
-        <div className="bg-gray-900/50 p-1 rounded-2xl shadow-2xl border border-gray-800">
-          <BBQChart data={data} targetTemp={targetTemp} />
-        </div>
+            {activeSession && (
+              <div className="mb-6 bg-orange-900/40 border border-orange-500/50 p-4 rounded-xl flex items-center justify-between">
+                <div>
+                  <h3 className="text-orange-100 font-bold text-lg flex items-center gap-2">
+                    Active Cook: {activeSession.name}
+                    <button
+                      onClick={async () => {
+                        const newState = !activeSession.notifications_enabled;
+                        setActiveSession(prev => ({ ...prev, notifications_enabled: newState }));
+                        await fetch('/api/sessions/notifications', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ sessionId: activeSession.id, enabled: newState })
+                        });
+                      }}
+                      className={`ml-2 px-2 py-1 text-xs rounded border transition-colors ${activeSession.notifications_enabled ? 'bg-green-500/20 text-green-300 border-green-500/50' : 'bg-gray-500/20 text-gray-400 border-gray-500/50'}`}
+                    >
+                      {activeSession.notifications_enabled ? '🔔 SMS ON' : '🔕 SMS OFF'}
+                    </button>
+                  </h3>
+                  <p className="text-orange-300 text-sm">Recording data to the Cookbook since {new Date(activeSession.start_time).toLocaleTimeString()}</p>
+                </div>
+                <button 
+                  onClick={handleEndCook}
+                  className="flex items-center gap-2 bg-red-600 hover:bg-red-500 text-white px-4 py-2 rounded-lg font-bold transition-colors shadow-lg"
+                >
+                  <Square size={18} fill="currentColor" /> End Cook
+                </button>
+              </div>
+            )}
+
+            <PredictionPanel 
+              data={data}
+              targetTemp={targetTemp}
+              setTargetTemp={handleTargetTempChange}
+              currentMeatTemp={currentMeatTemp}
+              currentSmokerTemp={currentSmokerTemp}
+              currentProbe3={currentProbe3}
+              currentProbe4={currentProbe4}
+            />
+
+            <div className="bg-gray-900/50 p-1 rounded-2xl shadow-2xl border border-gray-800">
+              <BBQChart data={data} targetTemp={targetTemp} />
+            </div>
+          </>
+        ) : (
+          <Cookbook />
+        )}
 
         <div className="mt-4 flex justify-between text-xs text-gray-500 px-2">
           <p>Tip: Hover directly over the time or temperature axis numbers to scale/shift them independently!</p>

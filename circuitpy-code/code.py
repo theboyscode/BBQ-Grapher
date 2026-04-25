@@ -80,9 +80,10 @@ def volt_to_percent(voltage, max_voltage):
     return (voltage / max_voltage) * 100
 
 def probe_check(temp):  # if value is wildly high no probe is connected
-    return temp if temp <= 11000 else 0
+    return temp if temp <= 11000 else None
 
 battery_val = 3.3
+consecutive_failures = 0
 
 
 while True:
@@ -90,9 +91,13 @@ while True:
     for adv in ble.start_scan(ProvideServicesAdvertisement, timeout=5):
         if IBBQService in adv.services:
             print("🎯 Found iBBQ thermometer! Attempting to connect...")
-            ibbq_connection = ble.connect(adv)
-            print("✅ SUCCESS: Connected to iBBQ thermometer over Bluetooth!")
-            break
+            try:
+                ibbq_connection = ble.connect(adv)
+                print("✅ SUCCESS: Connected to iBBQ thermometer over Bluetooth!")
+                break
+            except Exception as e:
+                print(f"❌ BLE Connection Failed: {e}")
+                time.sleep(1)
 
     # Stop scanning whether or not we are connected.
     ble.stop_scan()
@@ -116,18 +121,32 @@ while True:
                 mqtt_client.loop(timeout=1)
 
                 for feed, val in zip(feeds, grill_vals):
-                    print(f"   ➜ Sending value: {val:.1f}°F to topic: {feed}")
-                    mqtt_client.publish(feed, val)
+                    if val is not None:
+                        print(f"   ➜ Sending value: {val:.1f}°F to topic: {feed}")
+                        mqtt_client.publish(feed, val)
+                    else:
+                        print(f"   ➜ Probe disconnected. Not sending data to topic: {feed}")
 
                 mqtt_client.publish(battery_feed, battery_percentage)
                 print(f"📦 Successfully published all data! (Battery: {battery_percentage:.0f}%)\n")
+                consecutive_failures = 0
             
             except Exception as e:
                 print(f"⚠️ MQTT Error: {e}")
-                print("🔄 Attempting to reconnect to MQTT Broker...")
-                try:
-                    mqtt_client.reconnect()
-                except Exception as reconnect_e:
-                    print(f"❌ Reconnect failed: {reconnect_e}")
+                consecutive_failures += 1
+                if consecutive_failures > 5:
+                    print("🔄 Too many failures. Attempting full Wi-Fi and MQTT reset...")
+                    try:
+                        wifi.radio.connect(os.getenv("CIRCUITPY_WIFI_SSID"), os.getenv("CIRCUITPY_WIFI_PASSWORD"))
+                        mqtt_client.connect()
+                        consecutive_failures = 0
+                    except Exception as reset_e:
+                        print(f"❌ Full reset failed: {reset_e}")
+                else:
+                    print("🔄 Attempting to reconnect to MQTT Broker...")
+                    try:
+                        mqtt_client.reconnect()
+                    except Exception as reconnect_e:
+                        print(f"❌ Reconnect failed: {reconnect_e}")
 
             time.sleep(5)

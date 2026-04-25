@@ -45,8 +45,15 @@ const PredictionPanel = ({ data, targetTemp, setTargetTemp, currentMeatTemp, cur
     const m = (validPoints * sumXY - sumX * sumY) / (validPoints * sumX2 - sumX * sumX);
     const k = -m;
     
-    // If k <= 0, the meat isn't heating up
-    if (k <= 0.0001) return 'Stalled/Cooling';
+    // Check for "The Stall"
+    // Usually happens between 150°F and 175°F. 
+    // If the smoker is hot but k is extremely low or negative, it's evaporating!
+    if (currentMeatTemp >= 150 && currentMeatTemp <= 175 && avgSmokerTemp > 200 && k <= 0.0005) {
+      return 'IN THE STALL';
+    }
+
+    // If k <= 0 and we aren't in the stall, it's just cooling down
+    if (k <= 0) return 'Cooling down';
 
     // Calculate remaining time
     // t_remaining = ln((T_env - T_current) / (T_env - T_target)) / k

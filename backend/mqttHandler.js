@@ -1,7 +1,13 @@
 const mqtt = require('mqtt');
 const db = require('./db');
 
+const twilio = require('twilio');
+
 function setupMqtt(io) {
+  let insertDebounceTimer = null;
+  let lastSessionId = null;
+  let hasAlertedTarget = false;
+  let hasAlertedFire = false;
   // Connect to Docker broker with credentials
   const mqttUser = process.env.MQTT_USER || 'bbq_admin';
   const mqttPass = process.env.MQTT_PASS || 'bbq_secret';
@@ -38,6 +44,22 @@ function setupMqtt(io) {
         currentBattery = row.battery;
     }
   });
+
+  function sendSmsAlert(message) {
+    const accountSid = process.env.TWILIO_ACCOUNT_SID;
+    const authToken = process.env.TWILIO_AUTH_TOKEN;
+    const fromPhone = process.env.TWILIO_FROM_PHONE;
+    const toPhone = process.env.TWILIO_TO_PHONE;
+    
+    if (!accountSid || !authToken || !fromPhone || !toPhone) return;
+    
+    const twilioClient = twilio(accountSid, authToken);
+    twilioClient.messages.create({
+        body: `🔥 BBQ Alert: ${message}`,
+        from: fromPhone,
+        to: toPhone
+    }).catch(err => console.error("Twilio SMS failed:", err));
+  }
 
   client.on('message', (topic, message) => {
     // message is Buffer
@@ -80,20 +102,67 @@ function setupMqtt(io) {
     }
 
     if (updated) {
-        // Insert into DB and emit to frontend
-        db.insertTemperature(currentMeatTemp, currentSmokerTemp, currentProbe3, currentProbe4, currentBattery, (err, lastID) => {
-            if (err) {
-                console.error('Failed to insert temp to DB', err);
-                return;
-            }
-            
-            // Re-fetch the newly inserted row to get the exact DB timestamp
-            db.db.get(`SELECT * FROM temperatures WHERE id = ?`, [lastID], (err, row) => {
-                if (row) {
-                    io.emit('temperatureUpdate', row);
+        // Debounce the database insert and UI broadcast
+        if (insertDebounceTimer) {
+            clearTimeout(insertDebounceTimer);
+        }
+
+        insertDebounceTimer = setTimeout(() => {
+            db.getActiveSession((err, session) => {
+                if (session) {
+                    // Reset alert flags on new session
+                    if (lastSessionId !== session.id) {
+                        lastSessionId = session.id;
+                        hasAlertedTarget = false;
+                        hasAlertedFire = false;
+                    }
+
+                    // Check Webhook Alerts (only if enabled for this session)
+                    if (session.notifications_enabled) {
+                        if (currentMeatTemp >= session.target_temp && !hasAlertedTarget) {
+                            sendSmsAlert(`Meat has reached target temp of ${session.target_temp}°F! Currently at ${currentMeatTemp}°F.`);
+                            hasAlertedTarget = true;
+                        } else if (currentMeatTemp < session.target_temp - 5) {
+                            hasAlertedTarget = false; // Reset if temp drops significantly
+                        }
+
+                        if (currentSmokerTemp > 0 && currentSmokerTemp < 200 && !hasAlertedFire && currentMeatTemp < session.target_temp) {
+                            sendSmsAlert(`Smoker temp has dropped to ${currentSmokerTemp}°F. Check the fire!`);
+                            hasAlertedFire = true;
+                        } else if (currentSmokerTemp > 220) {
+                            hasAlertedFire = false; // Reset if fire recovers
+                        }
+                    }
+
+                    // Insert into DB and emit to frontend
+                    db.insertTemperature(session.id, currentMeatTemp, currentSmokerTemp, currentProbe3, currentProbe4, currentBattery, (err, lastID) => {
+                        if (err) {
+                            console.error('Failed to insert temp to DB', err);
+                            return;
+                        }
+                        
+                        db.db.get(`SELECT * FROM temperatures WHERE id = ?`, [lastID], (err, row) => {
+                            if (row) io.emit('temperatureUpdate', row);
+                        });
+                    });
+                } else {
+                    // No active session. Reset state.
+                    lastSessionId = null;
+                    hasAlertedTarget = false;
+                    hasAlertedFire = false;
+
+                    // Emit live updates to UI even without recording to DB
+                    io.emit('temperatureUpdate', {
+                        timestamp: new Date().toISOString().replace('T', ' ').substring(0, 19),
+                        meatTemp: currentMeatTemp,
+                        smokerTemp: currentSmokerTemp,
+                        probe3: currentProbe3,
+                        probe4: currentProbe4,
+                        battery: currentBattery
+                    });
                 }
             });
-        });
+        }, 500); // Wait 500ms for other topic messages to arrive
     }
   });
 }

@@ -21,8 +21,12 @@ services:
       - MQTT_USER=bbq_admin
       - MQTT_PASS=bbq_secret
       - MQTT_HOST=broker
+      - TWILIO_ACCOUNT_SID=${TWILIO_ACCOUNT_SID}
+      - TWILIO_AUTH_TOKEN=${TWILIO_AUTH_TOKEN}
+      - TWILIO_FROM_PHONE=${TWILIO_FROM_PHONE}
+      - TWILIO_TO_PHONE=${TWILIO_TO_PHONE}
     volumes:
-      - bbq_db_data:/app
+      - bbq_db_data:/app/data
     depends_on:
       - broker
     restart: unless-stopped
