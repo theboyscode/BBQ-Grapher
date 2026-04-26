@@ -12,6 +12,7 @@ function App() {
   const [data, setData] = useState([]);
   const [activeSession, setActiveSession] = useState(null);
   const [targetTemp, setTargetTemp] = useState(205);
+  const [zipCode, setZipCode] = useState('');
   const [currentMeatTemp, setCurrentMeatTemp] = useState(null);
   const [currentSmokerTemp, setCurrentSmokerTemp] = useState(null);
   const [currentProbe3, setCurrentProbe3] = useState(null);
@@ -55,6 +56,9 @@ function App() {
       if (session && session.target_temp) {
         setTargetTemp(session.target_temp);
       }
+      if (session && session.zip_code) {
+        setZipCode(session.zip_code);
+      }
     });
 
     socket.on('targetTempChanged', ({ temp }) => {
@@ -63,6 +67,11 @@ function App() {
 
     socket.on('notificationsChanged', ({ enabled }) => {
       setActiveSession(prev => prev ? { ...prev, notifications_enabled: enabled } : prev);
+    });
+
+    socket.on('zipCodeChanged', ({ zipCode }) => {
+      setZipCode(zipCode);
+      setActiveSession(prev => prev ? { ...prev, zip_code: zipCode } : prev);
     });
 
     socket.on('temperatureUpdate', (newDataPoint) => {
@@ -84,16 +93,18 @@ function App() {
       socket.off('activeSession');
       socket.off('targetTempChanged');
       socket.off('notificationsChanged');
+      socket.off('zipCodeChanged');
     };
   }, []);
 
   const handleStartCook = async () => {
     const name = prompt("Enter a name for this cook session:", "Brisket");
     if (!name) return;
+    const initialZip = prompt("Enter your ZIP code for weather data (optional):", zipCode || "");
     await fetch('/api/sessions/start', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name })
+      body: JSON.stringify({ name, zipCode: initialZip || "" })
     });
   };
 
@@ -218,7 +229,26 @@ function App() {
                       {activeSession.notifications_enabled ? '🔔 SMS ON' : '🔕 SMS OFF'}
                     </button>
                   </h3>
-                  <p className="text-orange-300 text-sm">Recording data to the Cookbook since {new Date(activeSession.start_time).toLocaleTimeString()}</p>
+                  <p className="text-orange-300 text-sm mt-1">Recording data to the Cookbook since {new Date(activeSession.start_time).toLocaleTimeString()}</p>
+                  <div className="flex items-center mt-2">
+                    <label className="text-orange-200 text-xs mr-2 font-semibold">ZIP Code:</label>
+                    <input 
+                      type="text" 
+                      value={zipCode} 
+                      onChange={(e) => setZipCode(e.target.value)}
+                      onBlur={async () => {
+                        if (activeSession) {
+                          await fetch('/api/sessions/zip', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ sessionId: activeSession.id, zipCode })
+                          });
+                        }
+                      }}
+                      className="bg-gray-800/50 text-white text-xs px-2 py-1 rounded border border-gray-600 w-24 focus:outline-none focus:border-orange-500"
+                      placeholder="e.g. 78701"
+                    />
+                  </div>
                 </div>
                 <button 
                   onClick={handleEndCook}

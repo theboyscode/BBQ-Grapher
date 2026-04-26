@@ -79,6 +79,21 @@ const BBQChart = ({ data, targetTemp }) => {
     });
   }
 
+  const hasAmbient = data.some(d => d.ambientTemp != null);
+  if (hasAmbient) {
+    chartData.datasets.push({
+      label: 'Ambient Temp (°F)',
+      data: data.map(d => ({ x: new Date(d.timestamp.replace(' ', 'T') + 'Z'), y: d.ambientTemp != null ? d.ambientTemp : null })),
+      borderColor: 'rgb(148, 163, 184)',
+      backgroundColor: 'rgba(148, 163, 184, 0.5)',
+      tension: 0.3,
+      pointRadius: 0,
+      pointHitRadius: 10,
+      borderDash: [5, 5],
+      spanGaps: true,
+    });
+  }
+
   // Add a horizontal line for the target temp if it exists
   const annotations = targetTemp ? {
     annotations: {

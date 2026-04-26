@@ -7,7 +7,7 @@ const db = require('./db');
 
 const app = express();
 const corsOptions = {
-  origin: process.env.FRONTEND_URL || "http://localhost:5173", // Restrict to trusted origin
+  origin: "*", // Allow any device on the local network to connect
   methods: ["GET", "POST"]
 };
 
@@ -19,6 +19,10 @@ const io = new Server(server, { cors: corsOptions });
 
 // Setup MQTT
 setupMqtt(io);
+
+// Setup Weather Polling
+const weather = require('./weather');
+weather.startPolling();
 
 // Socket.io connection
 io.on('connection', (socket) => {
@@ -47,11 +51,14 @@ io.on('connection', (socket) => {
 // --- REST API FOR SESSIONS ---
 
 app.post('/api/sessions/start', (req, res) => {
-  const { name } = req.body;
+  const { name, zipCode } = req.body;
   if (name !== undefined && typeof name !== 'string') {
     return res.status(400).json({ error: "Name must be a string" });
   }
-  db.createSession(name || 'New Cook', (err, sessionId) => {
+  if (zipCode !== undefined && typeof zipCode !== 'string') {
+    return res.status(400).json({ error: "Zip Code must be a string" });
+  }
+  db.createSession(name || 'New Cook', zipCode || '', (err, sessionId) => {
     if (err) return res.status(500).json({ error: err.message });
     // Notify all clients that a new session started
     db.getActiveSession((err, session) => {
@@ -63,10 +70,20 @@ app.post('/api/sessions/start', (req, res) => {
 });
 
 app.post('/api/sessions/end', (req, res) => {
-  db.endActiveSession((err) => {
-    if (err) return res.status(500).json({ error: err.message });
-    io.emit('activeSession', null);
-    res.json({ success: true });
+  db.getActiveSession((err, session) => {
+    if (!session) return res.json({ success: true, message: "No active session" });
+    db.endActiveSession((err) => {
+      if (err) return res.status(500).json({ error: err.message });
+      
+      // Run decimation in the background
+      db.decimateSession(session.id, (err) => {
+        if (err) console.error("Decimation error:", err);
+        else console.log(`Session ${session.id} successfully decimated.`);
+      });
+
+      io.emit('activeSession', null);
+      res.json({ success: true });
+    });
   });
 });
 
@@ -107,6 +124,18 @@ app.post('/api/sessions/notifications', (req, res) => {
     // Notify clients so UI updates
     io.emit('notificationsChanged', { enabled });
     res.json({ success: true, enabled });
+  });
+});
+
+app.post('/api/sessions/zip', (req, res) => {
+  const { sessionId, zipCode } = req.body;
+  if (typeof sessionId !== 'number' || typeof zipCode !== 'string') {
+    return res.status(400).json({ error: "sessionId must be a number and zipCode must be a string" });
+  }
+  db.updateZipCode(sessionId, zipCode, (err) => {
+    if (err) return res.status(500).json({ error: err.message });
+    io.emit('zipCodeChanged', { zipCode });
+    res.json({ success: true, zipCode });
   });
 });
 

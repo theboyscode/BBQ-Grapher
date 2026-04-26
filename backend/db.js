@@ -40,6 +40,7 @@ const db = new sqlite3.Database(dbPath, (err) => {
       else {
         addColumnIfNotExists('sessions', 'target_temp', 'REAL DEFAULT 205');
         addColumnIfNotExists('sessions', 'notifications_enabled', 'BOOLEAN DEFAULT 1');
+        addColumnIfNotExists('sessions', 'zip_code', 'TEXT');
       }
     });
 
@@ -60,14 +61,15 @@ const db = new sqlite3.Database(dbPath, (err) => {
         addColumnIfNotExists('temperatures', 'probe4', 'REAL');
         addColumnIfNotExists('temperatures', 'battery', 'REAL');
         addColumnIfNotExists('temperatures', 'session_id', 'INTEGER');
+        addColumnIfNotExists('temperatures', 'ambientTemp', 'REAL');
       }
     });
   }
 });
 
-function insertTemperature(sessionId, meatTemp, smokerTemp, probe3, probe4, battery, callback) {
-  const sql = `INSERT INTO temperatures (session_id, meatTemp, smokerTemp, probe3, probe4, battery) VALUES (?, ?, ?, ?, ?, ?)`;
-  db.run(sql, [sessionId, meatTemp, smokerTemp, probe3, probe4, battery], function(err) {
+function insertTemperature(sessionId, meatTemp, smokerTemp, probe3, probe4, battery, ambientTemp, callback) {
+  const sql = `INSERT INTO temperatures (session_id, meatTemp, smokerTemp, probe3, probe4, battery, ambientTemp) VALUES (?, ?, ?, ?, ?, ?, ?)`;
+  db.run(sql, [sessionId, meatTemp, smokerTemp, probe3, probe4, battery, ambientTemp], function(err) {
     if (callback) callback(err, this.lastID);
   });
 }
@@ -90,11 +92,11 @@ function getLatest(callback) {
     });
 }
 
-function createSession(name, callback) {
+function createSession(name, zipCode, callback) {
   // End any currently active session first
   endActiveSession(() => {
-    const sql = `INSERT INTO sessions (name) VALUES (?)`;
-    db.run(sql, [name], function(err) {
+    const sql = `INSERT INTO sessions (name, zip_code) VALUES (?, ?)`;
+    db.run(sql, [name, zipCode], function(err) {
       if (callback) callback(err, this.lastID);
     });
   });
@@ -128,10 +130,57 @@ function updateNotifications(sessionId, enabled, callback) {
   });
 }
 
+function updateZipCode(sessionId, zipCode, callback) {
+  const sql = `UPDATE sessions SET zip_code = ? WHERE id = ?`;
+  db.run(sql, [zipCode, sessionId], function(err) {
+    if (callback) callback(err);
+  });
+}
+
 function getSessions(callback) {
   const sql = `SELECT * FROM sessions ORDER BY start_time DESC`;
   db.all(sql, [], (err, rows) => {
     if (callback) callback(err, rows);
+  });
+}
+
+function decimateSession(sessionId, callback) {
+  const sqlTemp = `
+    CREATE TEMP TABLE IF NOT EXISTS temp_decimated AS
+    SELECT session_id,
+           AVG(meatTemp) as meatTemp,
+           AVG(smokerTemp) as smokerTemp,
+           AVG(probe3) as probe3,
+           AVG(probe4) as probe4,
+           AVG(battery) as battery,
+           AVG(ambientTemp) as ambientTemp,
+           MIN(timestamp) as timestamp
+    FROM temperatures
+    WHERE session_id = ?
+    GROUP BY strftime('%Y-%m-%d %H:%M', timestamp);
+  `;
+  const sqlDelete = `DELETE FROM temperatures WHERE session_id = ?`;
+  const sqlInsert = `
+    INSERT INTO temperatures (session_id, meatTemp, smokerTemp, probe3, probe4, battery, ambientTemp, timestamp)
+    SELECT session_id, meatTemp, smokerTemp, probe3, probe4, battery, ambientTemp, timestamp
+    FROM temp_decimated;
+  `;
+  const sqlDrop = `DROP TABLE temp_decimated;`;
+
+  db.serialize(() => {
+    db.run(sqlDrop, [], () => {}); // Ignore error if table doesn't exist
+    db.run(sqlTemp, [sessionId], (err) => {
+      if (err) return callback && callback(err);
+      db.run(sqlDelete, [sessionId], (err) => {
+        if (err) return callback && callback(err);
+        db.run(sqlInsert, [], (err) => {
+          if (err) return callback && callback(err);
+          db.run(sqlDrop, [], (err) => {
+            if (callback) callback(err);
+          });
+        });
+      });
+    });
   });
 }
 
@@ -145,5 +194,7 @@ module.exports = {
   getActiveSession,
   getSessions,
   updateTargetTemp,
-  updateNotifications
+  updateNotifications,
+  updateZipCode,
+  decimateSession
 };

@@ -135,7 +135,9 @@ function setupMqtt(io) {
                     }
 
                     // Insert into DB and emit to frontend
-                    db.insertTemperature(session.id, currentMeatTemp, currentSmokerTemp, currentProbe3, currentProbe4, currentBattery, (err, lastID) => {
+                    const weather = require('./weather');
+                    const ambientTemp = weather.getCurrentAmbientTemp();
+                    db.insertTemperature(session.id, currentMeatTemp, currentSmokerTemp, currentProbe3, currentProbe4, currentBattery, ambientTemp, (err, lastID) => {
                         if (err) {
                             console.error('Failed to insert temp to DB', err);
                             return;
