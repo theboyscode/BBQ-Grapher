@@ -15,9 +15,6 @@ from adafruit_ble.advertising.standard import ProvideServicesAdvertisement
 from adafruit_ble_ibbq import IBBQService
 
 
-aio_username = os.getenv("aio_username")
-aio_key = os.getenv("aio_key")
-
 print(f"Connecting to {os.getenv('CIRCUITPY_WIFI_SSID')}")
 wifi.radio.connect(
     os.getenv("CIRCUITPY_WIFI_SSID"), os.getenv("CIRCUITPY_WIFI_PASSWORD")
@@ -43,8 +40,6 @@ def disconnected(client, userdata, rc):
 
 # Create a socket pool
 pool = adafruit_connection_manager.get_radio_socketpool(wifi.radio)
-ssl_context = adafruit_connection_manager.get_radio_ssl_context(wifi.radio)
-connection_manager = adafruit_connection_manager.get_connection_manager(pool)
 
 # Set up a MiniMQTT Client
 mqtt_client = MQTT.MQTT(
@@ -64,7 +59,8 @@ mqtt_client.on_connect = connected
 mqtt_client.on_disconnect = disconnected
 
 # Connect the client to the MQTT broker.
-print("🌐 Connecting to BBQ Grapher MQTT Broker at 192.168.12.87...")
+broker_address = os.getenv("MQTT_BROKER", "192.168.12.87")
+print(f"🌐 Connecting to BBQ Grapher MQTT Broker at {broker_address}...")
 mqtt_client.connect()
 
 # PyLint can't find BLERadio for some reason so special case it here.
@@ -82,7 +78,7 @@ def volt_to_percent(voltage, max_voltage):
 def probe_check(temp):  # if value is wildly high no probe is connected
     return temp if temp <= 11000 else None
 
-battery_val = 3.3
+
 consecutive_failures = 0
 
 
@@ -114,7 +110,7 @@ while True:
             )
 
             grill_vals = [probe_check(c_to_f(temp)) for temp in ibbq_service.temperatures]
-            battery_val, battery_max = ibbq_service.battery_level
+            battery_val = ibbq_service.battery_level[0]
             battery_percentage = (volt_to_percent(battery_val, 3.3))
 
             try:
