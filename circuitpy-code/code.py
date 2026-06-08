@@ -11,24 +11,30 @@ import adafruit_connection_manager
 import wifi
 import adafruit_minimqtt.adafruit_minimqtt as MQTT
 import adafruit_ble
+import board
+import neopixel
 from adafruit_ble.advertising.standard import ProvideServicesAdvertisement
 from adafruit_ble_ibbq import IBBQService
 
+pixel = neopixel.NeoPixel(board.NEOPIXEL, 1, brightness=0.3)
+pixel.fill((0, 0, 255)) # Blue: Connecting to Wi-Fi
 
 print(f"Connecting to {os.getenv('CIRCUITPY_WIFI_SSID')}")
-wifi.radio.connect(
-    os.getenv("CIRCUITPY_WIFI_SSID"), os.getenv("CIRCUITPY_WIFI_PASSWORD")
-)
-print(f"Connected to {os.getenv('CIRCUITPY_WIFI_SSID')}")
+try:
+    wifi.radio.connect(
+        os.getenv("CIRCUITPY_WIFI_SSID"), os.getenv("CIRCUITPY_WIFI_PASSWORD")
+    )
+    print(f"Connected to {os.getenv('CIRCUITPY_WIFI_SSID')}")
+except Exception as e:
+    pixel.fill((255, 0, 0)) # Red: Error
+    print(f"Wi-Fi connection failed: {e}")
+    time.sleep(5)
 
 ### Feeds ###
-#feeds = [str(aio_username) + f"/feeds/arduino/bbq{i}" for i in range(1, 4)]
-#feeds = [f"/feeds/arduino/bbq{i}" for i in range(1, 5)]
-feeds = ["bbq/meat", "bbq/smoker", "bbq/probe3", "bbq/probe4"]
+feeds = ["bbq/probe1", "bbq/probe2", "bbq/probe3", "bbq/probe4"]
 battery_feed = "/feeds/bbq_battery"
 
 print(feeds)
-
 
 # Define callback methods which are called when events occur
 # pylint: disable=unused-argument, redefined-outer-name
@@ -52,8 +58,6 @@ mqtt_client = MQTT.MQTT(
     keep_alive=60,
 )
 
-
-
 # Setup the callback methods above
 mqtt_client.on_connect = connected
 mqtt_client.on_disconnect = disconnected
@@ -61,7 +65,11 @@ mqtt_client.on_disconnect = disconnected
 # Connect the client to the MQTT broker.
 broker_address = os.getenv("MQTT_BROKER", "192.168.12.87")
 print(f"🌐 Connecting to BBQ Grapher MQTT Broker at {broker_address}...")
-mqtt_client.connect()
+try:
+    mqtt_client.connect()
+except Exception as e:
+    pixel.fill((255, 0, 0))
+    print(f"MQTT connection failed: {e}")
 
 # PyLint can't find BLERadio for some reason so special case it here.
 ble = adafruit_ble.BLERadio()  # pylint: disable=no-member
@@ -78,13 +86,19 @@ def volt_to_percent(voltage, max_voltage):
 def probe_check(temp):  # if value is wildly high no probe is connected
     return temp if temp <= 11000 else None
 
-
 consecutive_failures = 0
-
+pulse_val = 0
+pulse_dir = 10
 
 while True:
     print("📡 Scanning for iBBQ Bluetooth thermometer...")
     for adv in ble.start_scan(ProvideServicesAdvertisement, timeout=5):
+        # Pulse Yellow while scanning
+        pulse_val += pulse_dir
+        if pulse_val > 150 or pulse_val < 10:
+            pulse_dir = -pulse_dir
+        pixel.fill((pulse_val, pulse_val, 0))
+
         if IBBQService in adv.services:
             print("🎯 Found iBBQ thermometer! Attempting to connect...")
             try:
@@ -92,6 +106,7 @@ while True:
                 print("✅ SUCCESS: Connected to iBBQ thermometer over Bluetooth!")
                 break
             except Exception as e:
+                pixel.fill((255, 0, 0))
                 print(f"❌ BLE Connection Failed: {e}")
                 time.sleep(1)
 
@@ -113,6 +128,13 @@ while True:
             battery_val = ibbq_service.battery_level[0]
             battery_percentage = (volt_to_percent(battery_val, 3.3))
 
+            # Check if all probes are disconnected
+            all_disconnected = all(val is None for val in grill_vals)
+            if all_disconnected:
+                pixel.fill((255, 165, 0)) # Orange
+            else:
+                pixel.fill((0, 255, 0)) # Green
+
             try:
                 mqtt_client.loop(timeout=1)
 
@@ -128,6 +150,7 @@ while True:
                 consecutive_failures = 0
             
             except Exception as e:
+                pixel.fill((255, 0, 0)) # Red on error
                 print(f"⚠️ MQTT Error: {e}")
                 consecutive_failures += 1
                 if consecutive_failures > 5:

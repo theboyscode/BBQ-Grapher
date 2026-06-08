@@ -16,6 +16,7 @@ function getJSON(url) {
           reject(e);
         }
       });
+      res.on('error', reject);
     });
     req.on('error', reject);
     // Timeout so we don't hang forever
@@ -47,24 +48,24 @@ async function fetchWeatherForZip(zipCode) {
   return null;
 }
 
+function forcePoll() {
+  db.getActiveSession(async (err, session) => {
+    if (!session || !session.zip_code) {
+      currentAmbientTemp = null;
+      return;
+    }
+    const temp = await fetchWeatherForZip(session.zip_code);
+    if (temp !== null) {
+      currentAmbientTemp = temp;
+    }
+  });
+}
+
 function startPolling() {
   if (pollingInterval) clearInterval(pollingInterval);
   
-  const poll = () => {
-    db.getActiveSession(async (err, session) => {
-      if (!session || !session.zip_code) {
-        currentAmbientTemp = null;
-        return;
-      }
-      const temp = await fetchWeatherForZip(session.zip_code);
-      if (temp !== null) {
-        currentAmbientTemp = temp;
-      }
-    });
-  };
-
-  poll(); // poll immediately
-  pollingInterval = setInterval(poll, 15 * 60 * 1000); // 15 minutes
+  forcePoll(); // poll immediately
+  pollingInterval = setInterval(forcePoll, 15 * 60 * 1000); // 15 minutes
 }
 
 function getCurrentAmbientTemp() {
@@ -73,5 +74,6 @@ function getCurrentAmbientTemp() {
 
 module.exports = {
   startPolling,
-  getCurrentAmbientTemp
+  getCurrentAmbientTemp,
+  forcePoll
 };

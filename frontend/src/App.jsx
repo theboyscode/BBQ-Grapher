@@ -4,6 +4,7 @@ import { Battery, LayoutDashboard, BookOpen, Play, Square } from 'lucide-react';
 import BBQChart from './components/BBQChart';
 import PredictionPanel from './components/PredictionPanel';
 import Cookbook from './components/Cookbook';
+import ProbeConfig from './components/ProbeConfig';
 
 // Connect to the backend using a relative path, as Nginx will proxy /socket.io/ for us!
 const socket = io();
@@ -19,6 +20,7 @@ function App() {
   const [currentProbe4, setCurrentProbe4] = useState(null);
   const [battery, setBattery] = useState(null);
   const [activeTab, setActiveTab] = useState('dashboard');
+  const [predictionData, setPredictionData] = useState(null);
   
   // Real-time connection states
   const [isConnected, setIsConnected] = useState(socket.connected);
@@ -69,6 +71,10 @@ function App() {
       setActiveSession(prev => prev ? { ...prev, notifications_enabled: enabled } : prev);
     });
 
+    socket.on('intervalChanged', ({ interval }) => {
+      setActiveSession(prev => prev ? { ...prev, update_interval: interval } : prev);
+    });
+
     socket.on('zipCodeChanged', ({ zipCode }) => {
       setZipCode(zipCode);
       setActiveSession(prev => prev ? { ...prev, zip_code: zipCode } : prev);
@@ -93,6 +99,7 @@ function App() {
       socket.off('activeSession');
       socket.off('targetTempChanged');
       socket.off('notificationsChanged');
+      socket.off('intervalChanged');
       socket.off('zipCodeChanged');
     };
   }, []);
@@ -161,6 +168,8 @@ function App() {
               </button>
             </nav>
 
+            <ProbeConfig activeSession={activeSession} />
+
             {battery !== null && (
               <div className="flex items-center gap-1 text-gray-400 bg-gray-800/50 px-2 py-1.5 rounded-md border border-gray-700/50">
                 <Battery size={16} className={battery > 20 ? "text-green-400" : "text-red-400"} />
@@ -226,7 +235,7 @@ function App() {
                       }}
                       className={`ml-2 px-2 py-1 text-xs rounded border transition-colors ${activeSession.notifications_enabled ? 'bg-green-500/20 text-green-300 border-green-500/50' : 'bg-gray-500/20 text-gray-400 border-gray-500/50'}`}
                     >
-                      {activeSession.notifications_enabled ? '🔔 SMS ON' : '🔕 SMS OFF'}
+                      {activeSession.notifications_enabled ? '🔔 EMAIL ON' : '🔕 EMAIL OFF'}
                     </button>
                   </h3>
                   <p className="text-orange-300 text-sm mt-1">Recording data to the Cookbook since {new Date(activeSession.start_time).toLocaleTimeString()}</p>
@@ -267,10 +276,11 @@ function App() {
               currentSmokerTemp={currentSmokerTemp}
               currentProbe3={currentProbe3}
               currentProbe4={currentProbe4}
+              onPredictionUpdate={setPredictionData}
             />
 
             <div className="bg-gray-900/50 p-1 rounded-2xl shadow-2xl border border-gray-800">
-              <BBQChart data={data} targetTemp={targetTemp} />
+              <BBQChart data={data} targetTemp={targetTemp} predictionData={predictionData} />
             </div>
           </>
         ) : (

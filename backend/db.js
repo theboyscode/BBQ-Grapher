@@ -41,6 +41,11 @@ const db = new sqlite3.Database(dbPath, (err) => {
         addColumnIfNotExists('sessions', 'target_temp', 'REAL DEFAULT 205');
         addColumnIfNotExists('sessions', 'notifications_enabled', 'BOOLEAN DEFAULT 1');
         addColumnIfNotExists('sessions', 'zip_code', 'TEXT');
+        addColumnIfNotExists('sessions', 'probe1_role', 'TEXT DEFAULT "meat_primary"');
+        addColumnIfNotExists('sessions', 'probe2_role', 'TEXT DEFAULT "smoker_primary"');
+        addColumnIfNotExists('sessions', 'probe3_role', 'TEXT DEFAULT "none"');
+        addColumnIfNotExists('sessions', 'probe4_role', 'TEXT DEFAULT "none"');
+        addColumnIfNotExists('sessions', 'update_interval', 'INTEGER DEFAULT 0');
       }
     });
 
@@ -62,6 +67,20 @@ const db = new sqlite3.Database(dbPath, (err) => {
         addColumnIfNotExists('temperatures', 'battery', 'REAL');
         addColumnIfNotExists('temperatures', 'session_id', 'INTEGER');
         addColumnIfNotExists('temperatures', 'ambientTemp', 'REAL');
+      }
+    });
+
+    db.run(`CREATE TABLE IF NOT EXISTS settings (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      probe1_role TEXT DEFAULT 'meat_primary',
+      probe2_role TEXT DEFAULT 'smoker_primary',
+      probe3_role TEXT DEFAULT 'none',
+      probe4_role TEXT DEFAULT 'none',
+      update_interval INTEGER DEFAULT 0
+    )`, (err) => {
+      if (!err) {
+        db.run(`INSERT OR IGNORE INTO settings (id) VALUES (1)`);
+        addColumnIfNotExists('settings', 'update_interval', 'INTEGER DEFAULT 0');
       }
     });
   }
@@ -92,12 +111,33 @@ function getLatest(callback) {
     });
 }
 
+function getGlobalSettings(callback) {
+  db.get(`SELECT * FROM settings WHERE id = 1`, [], (err, row) => {
+    if (callback) callback(err, row);
+  });
+}
+
+function updateGlobalSettings(p1, p2, p3, p4, interval, callback) {
+  const sql = `UPDATE settings SET probe1_role = ?, probe2_role = ?, probe3_role = ?, probe4_role = ?, update_interval = ? WHERE id = 1`;
+  db.run(sql, [p1, p2, p3, p4, interval], function(err) {
+    if (callback) callback(err);
+  });
+}
+
 function createSession(name, zipCode, callback) {
   // End any currently active session first
   endActiveSession(() => {
-    const sql = `INSERT INTO sessions (name, zip_code) VALUES (?, ?)`;
-    db.run(sql, [name, zipCode], function(err) {
-      if (callback) callback(err, this.lastID);
+    getGlobalSettings((err, settings) => {
+      const p1 = settings ? settings.probe1_role : 'meat_primary';
+      const p2 = settings ? settings.probe2_role : 'smoker_primary';
+      const p3 = settings ? settings.probe3_role : 'none';
+      const p4 = settings ? settings.probe4_role : 'none';
+      const interval = settings && settings.update_interval ? settings.update_interval : 0;
+      
+      const sql = `INSERT INTO sessions (name, zip_code, probe1_role, probe2_role, probe3_role, probe4_role, update_interval) VALUES (?, ?, ?, ?, ?, ?, ?)`;
+      db.run(sql, [name, zipCode, p1, p2, p3, p4, interval], function(err) {
+        if (callback) callback(err, this.lastID);
+      });
     });
   });
 }
@@ -130,6 +170,13 @@ function updateNotifications(sessionId, enabled, callback) {
   });
 }
 
+function updateSessionInterval(sessionId, interval, callback) {
+  const sql = `UPDATE sessions SET update_interval = ? WHERE id = ?`;
+  db.run(sql, [interval, sessionId], function(err) {
+    if (callback) callback(err);
+  });
+}
+
 function updateZipCode(sessionId, zipCode, callback) {
   const sql = `UPDATE sessions SET zip_code = ? WHERE id = ?`;
   db.run(sql, [zipCode, sessionId], function(err) {
@@ -145,8 +192,9 @@ function getSessions(callback) {
 }
 
 function decimateSession(sessionId, callback) {
+  const tempTableName = `temp_decimated_${sessionId}`;
   const sqlTemp = `
-    CREATE TEMP TABLE IF NOT EXISTS temp_decimated AS
+    CREATE TEMP TABLE IF NOT EXISTS ${tempTableName} AS
     SELECT session_id,
            AVG(meatTemp) as meatTemp,
            AVG(smokerTemp) as smokerTemp,
@@ -163,9 +211,9 @@ function decimateSession(sessionId, callback) {
   const sqlInsert = `
     INSERT INTO temperatures (session_id, meatTemp, smokerTemp, probe3, probe4, battery, ambientTemp, timestamp)
     SELECT session_id, meatTemp, smokerTemp, probe3, probe4, battery, ambientTemp, timestamp
-    FROM temp_decimated;
+    FROM ${tempTableName};
   `;
-  const sqlDrop = `DROP TABLE temp_decimated;`;
+  const sqlDrop = `DROP TABLE IF EXISTS ${tempTableName};`;
 
   db.serialize(() => {
     db.run(sqlDrop, [], () => {}); // Ignore error if table doesn't exist
@@ -196,5 +244,8 @@ module.exports = {
   updateTargetTemp,
   updateNotifications,
   updateZipCode,
-  decimateSession
+  decimateSession,
+  getGlobalSettings,
+  updateGlobalSettings,
+  updateSessionInterval
 };

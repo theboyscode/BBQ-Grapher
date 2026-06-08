@@ -1,4 +1,4 @@
-
+import { useState, useRef } from 'react';
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -13,6 +13,7 @@ import {
 import { Line } from 'react-chartjs-2';
 import 'chartjs-adapter-date-fns';
 import zoomPlugin from 'chartjs-plugin-zoom';
+import { Maximize } from 'lucide-react';
 
 ChartJS.register(
   CategoryScale,
@@ -26,7 +27,26 @@ ChartJS.register(
   zoomPlugin
 );
 
-const BBQChart = ({ data, targetTemp }) => {
+const BBQChart = ({ data, targetTemp, predictionData }) => {
+  const chartRef = useRef(null);
+  const [zoomState, setZoomState] = useState(null);
+
+  const handleZoomPan = ({ chart }) => {
+    setZoomState({
+      xMin: chart.scales.x.min,
+      xMax: chart.scales.x.max,
+      yMin: chart.scales.y.min,
+      yMax: chart.scales.y.max,
+    });
+  };
+
+  const resetZoom = () => {
+    if (chartRef.current) {
+      chartRef.current.resetZoom();
+      setZoomState(null);
+    }
+  };
+
   const chartData = {
     datasets: [
       {
@@ -94,24 +114,33 @@ const BBQChart = ({ data, targetTemp }) => {
     });
   }
 
-  // Add a horizontal line for the target temp if it exists
-  const annotations = targetTemp ? {
-    annotations: {
-      targetLine: {
-        type: 'line',
-        yMin: targetTemp,
-        yMax: targetTemp,
-        borderColor: 'rgb(75, 192, 192)',
-        borderWidth: 2,
-        borderDash: [5, 5],
-        label: {
-          display: true,
-          content: 'Target',
-          position: 'end'
-        }
-      }
-    }
-  } : {};
+  if (targetTemp && data.length > 0) {
+    chartData.datasets.push({
+      label: 'Target Temp',
+      data: [
+        { x: new Date(data[0].timestamp.replace(' ', 'T') + 'Z'), y: targetTemp },
+        // Extend target line to cover prediction if available
+        { x: predictionData ? new Date(predictionData[predictionData.length - 1].x) : new Date(data[data.length - 1].timestamp.replace(' ', 'T') + 'Z'), y: targetTemp }
+      ],
+      borderColor: 'rgb(75, 192, 192)',
+      borderDash: [5, 5],
+      pointRadius: 0,
+      borderWidth: 2
+    });
+  }
+
+  if (predictionData && predictionData.length > 0) {
+    chartData.datasets.push({
+      label: 'Predicted Path',
+      data: predictionData,
+      borderColor: 'rgb(168, 85, 247)', // Purple
+      backgroundColor: 'rgba(168, 85, 247, 0.5)',
+      borderDash: [5, 5],
+      tension: 0.3,
+      pointRadius: 0,
+      pointHitRadius: 10,
+    });
+  }
 
   const options = {
     responsive: true,
@@ -135,7 +164,9 @@ const BBQChart = ({ data, targetTemp }) => {
           color: '#ccc'
         },
         ticks: { color: '#ccc' },
-        grid: { color: '#333' }
+        grid: { color: '#333' },
+        min: zoomState?.xMin,
+        max: zoomState?.xMax,
       },
       y: {
         title: {
@@ -144,7 +175,9 @@ const BBQChart = ({ data, targetTemp }) => {
           color: '#ccc'
         },
         ticks: { color: '#ccc' },
-        grid: { color: '#333' }
+        grid: { color: '#333' },
+        min: zoomState?.yMin,
+        max: zoomState?.yMax,
       }
     },
     plugins: {
@@ -154,8 +187,8 @@ const BBQChart = ({ data, targetTemp }) => {
       zoom: {
         pan: {
           enabled: true,
-          mode: 'xy', // Allow panning in both directions
-          overScaleMode: 'xy', // Allows panning just one axis when hovering over it
+          mode: 'xy',
+          onPanComplete: handleZoomPan
         },
         zoom: {
           wheel: {
@@ -164,32 +197,25 @@ const BBQChart = ({ data, targetTemp }) => {
           pinch: {
             enabled: true
           },
-          mode: 'xy', // Allow zooming in both directions
-          overScaleMode: 'xy', // Allows zooming just one axis when hovering over it
+          mode: 'xy',
+          onZoomComplete: handleZoomPan
         }
-      },
-      annotation: annotations // Note: Needs chartjs-plugin-annotation if used, but we'll stick to basic lines or just add a dataset for target
+      }
     }
   };
 
-  // Since we didn't install chartjs-plugin-annotation, let's just add the target as a dataset
-  if (targetTemp && data.length > 0) {
-    chartData.datasets.push({
-      label: 'Target Temp',
-      data: [
-        { x: new Date(data[0].timestamp.replace(' ', 'T') + 'Z'), y: targetTemp },
-        { x: new Date(data[data.length - 1].timestamp.replace(' ', 'T') + 'Z'), y: targetTemp }
-      ],
-      borderColor: 'rgb(75, 192, 192)',
-      borderDash: [5, 5],
-      pointRadius: 0,
-      borderWidth: 2
-    });
-  }
-
   return (
-    <div className="w-full h-96 bg-gray-900 rounded-xl p-4 shadow-lg border border-gray-800">
-      <Line options={options} data={chartData} />
+    <div className="relative w-full h-96 bg-gray-900 rounded-xl p-4 shadow-lg border border-gray-800">
+      <Line ref={chartRef} options={options} data={chartData} />
+      {zoomState && (
+        <button 
+          onClick={resetZoom}
+          className="absolute top-4 right-4 bg-gray-800 hover:bg-gray-700 text-gray-300 p-2 rounded-lg border border-gray-600 shadow-md flex items-center justify-center transition-colors"
+          title="Reset Zoom"
+        >
+          <Maximize size={16} />
+        </button>
+      )}
     </div>
   );
 };

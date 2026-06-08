@@ -1,26 +1,34 @@
-import { useMemo } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Timer, Target, Flame, Thermometer } from 'lucide-react';
 
-const PredictionPanel = ({ data, targetTemp, setTargetTemp, currentMeatTemp, currentSmokerTemp, currentProbe3, currentProbe4 }) => {
-  
-  const estimatedTimeRemaining = useMemo(() => {
-    if (!targetTemp || !data || data.length < 2 || !currentMeatTemp || !currentSmokerTemp) return null;
+const PredictionPanel = ({ data, targetTemp, setTargetTemp, currentMeatTemp, currentSmokerTemp, currentProbe3, currentProbe4, onPredictionUpdate }) => {
+  const [localTarget, setLocalTarget] = useState(targetTemp);
+
+  useEffect(() => {
+    setLocalTarget(targetTemp);
+  }, [targetTemp]);
+
+  const handleBlur = () => {
+    if (localTarget && localTarget !== targetTemp) {
+      setTargetTemp(localTarget);
+    }
+  };
+
+  const { label, curveData } = useMemo(() => {
+    if (!targetTemp || !data || data.length < 2 || !currentMeatTemp || !currentSmokerTemp) return { label: null, curveData: null };
     
     // Use the last 30 minutes of data to find the heating curve
     const thirtyMinsAgo = new Date(data[data.length - 1].timestamp.replace(' ', 'T') + 'Z').getTime() - 30 * 60 * 1000;
     const recentData = data.filter(d => new Date(d.timestamp.replace(' ', 'T') + 'Z').getTime() > thirtyMinsAgo);
     
-    if (recentData.length < 5) return null; // Not enough data points
+    if (recentData.length < 5) return { label: null, curveData: null };
 
     // Find the average smoker temp over this period to use as environmental temp
     const avgSmokerTemp = recentData.reduce((sum, d) => sum + d.smokerTemp, 0) / recentData.length;
 
-    if (targetTemp >= avgSmokerTemp) return 'Target ≥ Smoker';
-    if (currentMeatTemp >= targetTemp) return 'Done!';
+    if (targetTemp >= avgSmokerTemp) return { label: 'Target ≥ Smoker', curveData: null };
+    if (currentMeatTemp >= targetTemp) return { label: 'Done!', curveData: null };
 
-    // Newton's Law of Heating: T(t) = T_env - (T_env - T_initial) * e^(-kt)
-    // We linearize this to find k: ln(T_env - T(t)) = -k * t + b
-    // y = ln(avgSmokerTemp - meatTemp), x = time in minutes
     let sumX = 0, sumY = 0, sumXY = 0, sumX2 = 0;
     let validPoints = 0;
     
@@ -39,38 +47,52 @@ const PredictionPanel = ({ data, targetTemp, setTargetTemp, currentMeatTemp, cur
       }
     });
 
-    if (validPoints < 5) return 'Calculating...';
+    const denominator = validPoints * sumX2 - sumX * sumX;
+    if (validPoints < 5 || denominator === 0) return { label: 'Calculating...', curveData: null };
 
     // Calculate slope m = -k
-    const m = (validPoints * sumXY - sumX * sumY) / (validPoints * sumX2 - sumX * sumX);
+    const m = (validPoints * sumXY - sumX * sumY) / denominator;
     const k = -m;
     
-    // Check for "The Stall"
-    // Usually happens between 150°F and 175°F. 
-    // If the smoker is hot but k is extremely low or negative, it's evaporating!
     if (currentMeatTemp >= 150 && currentMeatTemp <= 175 && avgSmokerTemp > 200 && k <= 0.0005) {
-      return 'IN THE STALL';
+      return { label: 'IN THE STALL', curveData: null };
     }
 
-    // If k <= 0 and we aren't in the stall, it's just cooling down
-    if (k <= 0) return 'Cooling down';
+    if (k <= 0) return { label: 'Cooling down', curveData: null };
 
-    // Calculate remaining time
-    // t_remaining = ln((T_env - T_current) / (T_env - T_target)) / k
     const tempRatio = (avgSmokerTemp - currentMeatTemp) / (avgSmokerTemp - targetTemp);
-    
-    if (tempRatio <= 0) return 'Error';
+    if (tempRatio <= 0) return { label: 'Error', curveData: null };
 
     const minsRemaining = Math.log(tempRatio) / k;
-    
-    if (minsRemaining > 24 * 60) return '> 24 hrs'; // Unreasonable
-    if (minsRemaining < 0) return 'Done!';
+    if (minsRemaining > 24 * 60) return { label: '> 24 hrs', curveData: null };
+    if (minsRemaining < 0) return { label: 'Done!', curveData: null };
     
     const hrs = Math.floor(minsRemaining / 60);
     const mins = Math.floor(minsRemaining % 60);
 
-    return `${hrs}h ${mins}m`;
+    // Generate curve data points
+    const curve = [];
+    const currentTimeMs = new Date(data[data.length - 1].timestamp.replace(' ', 'T') + 'Z').getTime();
+    const finishTimeMs = currentTimeMs + (minsRemaining * 60 * 1000);
+    
+    curve.push({ x: new Date(currentTimeMs), y: currentMeatTemp });
+    
+    const intervalMs = 15 * 60 * 1000;
+    for (let t = currentTimeMs + intervalMs; t < finishTimeMs; t += intervalMs) {
+       const elapsedMinsSinceNow = (t - currentTimeMs) / (60 * 1000);
+       const predictedTemp = avgSmokerTemp - (avgSmokerTemp - currentMeatTemp) * Math.exp(-k * elapsedMinsSinceNow);
+       curve.push({ x: new Date(t), y: predictedTemp });
+    }
+    curve.push({ x: new Date(finishTimeMs), y: targetTemp });
+
+    return { label: `${hrs}h ${mins}m`, curveData: curve };
   }, [data, targetTemp, currentMeatTemp, currentSmokerTemp]);
+
+  useEffect(() => {
+    if (onPredictionUpdate) {
+      onPredictionUpdate(curveData);
+    }
+  }, [curveData, onPredictionUpdate]);
 
   return (
     <div className="flex flex-wrap gap-4 mb-6">
@@ -141,8 +163,9 @@ const PredictionPanel = ({ data, targetTemp, setTargetTemp, currentMeatTemp, cur
           <div className="flex items-center mt-1">
             <input 
               type="number" 
-              value={targetTemp}
-              onChange={(e) => setTargetTemp(Number(e.target.value))}
+              value={localTarget}
+              onChange={(e) => setLocalTarget(Number(e.target.value))}
+              onBlur={handleBlur}
               className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-white text-xl font-bold focus:outline-none focus:border-teal-500"
             />
             <span className="ml-2 text-gray-400 font-bold">°F</span>
@@ -158,7 +181,7 @@ const PredictionPanel = ({ data, targetTemp, setTargetTemp, currentMeatTemp, cur
         <div>
           <p className="text-gray-400 text-sm font-medium">Estimated Time</p>
           <p className="text-3xl font-bold text-purple-100">
-            {estimatedTimeRemaining || '--'}
+            {label || '--'}
           </p>
         </div>
       </div>
