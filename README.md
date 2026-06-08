@@ -1,13 +1,15 @@
 # BBQ Grapher Pro 🍖🔥
 
-BBQ Grapher Pro is a full-stack, predictive IoT BBQ monitoring system. It intercepts Bluetooth data from a smart thermometer using an ESP32 microcontroller, relays it over Wi-Fi via MQTT to a self-hosted Docker stack, and provides a beautiful, real-time React dashboard with intelligent "Stall" detection and Twilio SMS alerts.
+BBQ Grapher Pro is a full-stack, predictive IoT BBQ monitoring system. It intercepts Bluetooth data from a smart thermometer using an ESP32 microcontroller, relays it over Wi-Fi via MQTT to a self-hosted Docker stack, and provides a beautiful, real-time React dashboard with intelligent "Stall" detection, predictive trendlines, and rich HTML Email alerts.
 
 ## 🌟 Features
 - **Real-Time Dashboard:** Watch your meat and smoker temperatures live with smooth Chart.js visualizations.
+- **Predictive Trendlines:** Uses Newton's Law of Cooling and real-time slope analysis to mathematically detect when your meat hits "The Stall" (evaporative cooling plateau) and predicts your finish time.
+- **Dynamic Probe Mapping:** Configure which physical probe ports correspond to your primary/secondary meat and smoker probes directly from the UI.
 - **Session Tracking (The Cookbook):** Start and end distinct cooking sessions. All data is saved to a local SQLite database so you can review your historical cooks later.
-- **Algorithmic Stall Detection:** Uses Newton's Law of Cooling and real-time slope analysis to mathematically detect when your meat hits "The Stall" (evaporative cooling plateau).
-- **SMS Alerts:** Integrates with Twilio to send a text message to your phone when the meat reaches its target temperature or if your smoker fire drops below 200°F.
-- **Fully Self-Hosted:** Runs 100% locally on your network via Docker. No cloud subscriptions required (other than a cheap Twilio API key for texts).
+- **HTML Email Alerts:** Receive beautifully formatted HTML tables of your live BBQ data directly to your inbox when your meat reaches its target temperature, if your smoker fire drops below 200°F, or on a recurring scheduled interval.
+- **Diagnostic ESP32 Status:** The ESP32 utilizes its built-in NeoPixel to display live diagnostics (Wi-Fi status, MQTT connection, and probe readings) at a glance.
+- **Fully Self-Hosted:** Runs 100% locally on your network via Docker. No cloud subscriptions required.
 
 ---
 
@@ -37,18 +39,17 @@ You need a microcontroller capable of running **CircuitPython** with native supp
 You need a home server, Raspberry Pi, or always-on PC with Docker installed to host the backend.
 
 1. Clone this repository.
-2. If you want SMS alerts, create a file named `.env` in the root directory and add your Twilio credentials:
+2. To enable HTML Email alerts, create a file named `.env` in the root directory and add your SMTP credentials (such as a Gmail address and an App Password):
    ```env
-   TWILIO_ACCOUNT_SID=your_account_sid
-   TWILIO_AUTH_TOKEN=your_auth_token
-   TWILIO_FROM_PHONE=+1234567890
-   TWILIO_TO_PHONE=+1987654321
+   SMTP_USER=your_gmail_address@gmail.com
+   SMTP_PASS=your_16_character_app_password
+   EMAIL_TO=where_you_want_to_receive_alerts@gmail.com
    ```
 3. Run Docker Compose to build and start the entire stack:
    ```bash
    docker-compose up -d --build
    ```
-4. Access the beautiful web interface by navigating to `http://<YOUR_SERVER_IP>:5173`.
+4. Access the beautiful web interface by navigating to `http://<YOUR_SERVER_IP>:5174`.
 
 ### Phase 2: Microcontroller Setup (ESP32)
 1. Install the latest version of [CircuitPython](https://circuitpython.org/) onto your ESP32-S3.
@@ -58,6 +59,7 @@ You need a home server, Raspberry Pi, or always-on PC with Docker installed to h
    - `adafruit_ble_ibbq`
    - `adafruit_minimqtt`
    - `adafruit_connection_manager`
+   - `neopixel`
 4. Create a `settings.toml` file in the root of your `CIRCUITPY` drive with your Wi-Fi and MQTT server details:
    ```toml
    CIRCUITPY_WIFI_SSID = "Your_WiFi_Network"
@@ -105,20 +107,20 @@ graph TD
     end
 
     %% External Services
-    Twilio[Twilio SMS API]
-    User[User's Phone / Browser]
+    Email[SMTP Server]
+    User[User's Inbox / Browser]
 
     %% Data Flow
     ESP -- Wi-Fi MQTT Publish --> Broker
     Broker -- MQTT Subscribe --> Backend
     Backend -- Save / Load Session Data --> DB
-    Backend -- Send Alerts via Webhook --> Twilio
+    Backend -- Send Alerts via Nodemailer --> Email
     Backend -- Emit Real-Time Data --> Frontend
     Frontend -- HTTP / WebSocket --> Nginx
     Nginx -- Proxy --> User
 ```
 
-- **ESP32 Script:** Scans for BLE iBBQ devices, parses the raw hex temperatures, and publishes them securely to an MQTT broker.
+- **ESP32 Script:** Scans for BLE iBBQ devices, parses the raw hex temperatures, visually indicates status via NeoPixels, and publishes data securely to an MQTT broker.
 - **Broker Container:** A lightweight Node.js/Aedes MQTT broker.
-- **Backend Container:** A Node.js/Express server that listens to MQTT topics, debounces the data, saves it to an SQLite database (`/app/data/bbq_data.db`), handles Twilio webhook logic, and broadcasts live data to the frontend via WebSockets.
+- **Backend Container:** A Node.js/Express server that listens to MQTT topics, debounces the data, saves it to an SQLite database (`/app/data/bbq_data.db`), dynamically routes physical probes to logical roles, generates HTML emails via Nodemailer, and broadcasts live data to the frontend.
 - **Frontend Container:** A Vite + React application styled with TailwindCSS and Chart.js, served securely behind an Nginx reverse proxy.
